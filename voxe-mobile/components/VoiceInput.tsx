@@ -22,79 +22,147 @@ export default function VoiceInput({
 
   const startRecording = async () => {
     try {
+      console.log('\n🎤 === VOICE RECORDING STARTED ===');
+      
       // Request permissions
+      console.log('🔐 Requesting microphone permissions...');
       const { status } = await Audio.requestPermissionsAsync();
       if (status !== 'granted') {
+        console.log('❌ Microphone permission denied');
         Alert.alert('Permission Required', 'Please grant microphone permission to record audio.');
         return;
       }
+      console.log('✅ Microphone permission granted');
 
       // Configure audio mode
+      console.log('🔧 Configuring audio mode...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
+      console.log('✅ Audio mode configured');
 
       // Create recording
+      console.log('📱 Creating recording instance...');
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      console.log('✅ Recording prepared with HIGH_QUALITY preset');
       
       recordingRef.current = recording;
       setIsRecording(true);
       setRecordingDuration(0);
 
       // Start duration timer
+      console.log('⏱️ Starting duration timer...');
       durationIntervalRef.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
+        setRecordingDuration(prev => {
+          const newDuration = prev + 1;
+          if (newDuration % 5 === 0) { // Log every 5 seconds
+            console.log(`🎤 Recording duration: ${newDuration}s`);
+          }
+          return newDuration;
+        });
       }, 1000);
 
+      console.log('🎙️ Starting audio recording...');
       await recording.startAsync();
+      console.log('✅ Audio recording started successfully');
+      
     } catch (error) {
-      console.error('Failed to start recording:', error);
+      console.error('❌ Failed to start recording:', error);
       Alert.alert('Error', 'Failed to start recording. Please try again.');
     }
   };
 
   const stopRecording = async () => {
     try {
-      if (!recordingRef.current) return;
+      console.log('\n🛑 === STOPPING VOICE RECORDING ===');
+      
+      if (!recordingRef.current) {
+        console.log('❌ No recording instance found');
+        return;
+      }
 
       setIsRecording(false);
       
       // Clear duration timer
       if (durationIntervalRef.current) {
+        console.log('⏱️ Clearing duration timer...');
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
       }
 
+      console.log('🛑 Stopping and unloading recording...');
       await recordingRef.current.stopAndUnloadAsync();
       const uri = recordingRef.current.getURI();
       
       if (uri) {
-        console.log('Audio recorded successfully:', uri);
+        console.log('✅ Audio recorded successfully:', {
+          uri: uri,
+          duration: `${recordingDuration}s`,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Check file info if possible
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(uri);
+          console.log('📁 Audio file info:', {
+            exists: fileInfo.exists,
+            size: fileInfo.exists ? `${fileInfo.size} bytes (${(fileInfo.size / 1024).toFixed(2)} KB)` : 'unknown',
+            uri: fileInfo.uri
+          });
+        } catch (fileInfoError) {
+          console.log('⚠️ Could not get file info:', fileInfoError);
+        }
+        
         onAudioRecorded(uri);
         
         // Send to backend for transcription
         try {
-          console.log('Sending audio to backend:', uri);
+          console.log('\n🌐 === SENDING TO BACKEND FOR TRANSCRIPTION ===');
+          console.log('📤 Importing API service...');
           const { apiService } = await import('../services/api');
+          
+          console.log('📤 Calling apiService.processAudio()...');
+          console.log('📤 Audio URI being sent:', uri);
+          
           const response = await apiService.processAudio(uri);
-          console.log('Transcription response:', response);
+          
+          console.log('✅ Transcription response received:', {
+            success: response.success,
+            transcription: `"${response.transcription}"`,
+            confidence: response.confidence,
+            duration: response.duration,
+            mock: response.mock || false,
+            requestId: response.requestId || 'unknown'
+          });
+          
+          console.log('🎯 Calling onTranscriptionReceived with:', response.transcription);
           onTranscriptionReceived(response.transcription);
+          
         } catch (error) {
-          console.error('Transcription error:', error);
+          console.error('❌ Transcription error:', {
+            error: error instanceof Error ? error.message : error,
+            stack: error instanceof Error ? error.stack : undefined
+          });
           Alert.alert('Error', 'Failed to transcribe audio. Please try again.');
+          console.log('🔄 Calling onTranscriptionReceived with empty string to clear processing state');
           onTranscriptionReceived(''); // Clear processing state
         }
       } else {
-        console.error('No audio URI received from recording');
+        console.error('❌ No audio URI received from recording');
         Alert.alert('Error', 'Failed to save recording. Please try again.');
       }
 
       recordingRef.current = null;
       setRecordingDuration(0);
+      console.log('🧹 Recording cleanup completed');
+      
     } catch (error) {
-      console.error('Failed to stop recording:', error);
+      console.error('❌ Failed to stop recording:', {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined
+      });
       Alert.alert('Error', 'Failed to stop recording. Please try again.');
     }
   };

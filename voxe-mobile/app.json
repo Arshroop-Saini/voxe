@@ -6,6 +6,9 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "voxemobile",
+    "linking": {
+      "prefixes": ["voxemobile://", "exp://localhost:8081"]
+    },
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {

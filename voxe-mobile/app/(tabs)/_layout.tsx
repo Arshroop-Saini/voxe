@@ -35,7 +35,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="connections"
+        options={{
+          title: 'Connections',
+          tabBarIcon: ({ color }) => <TabBarIcon name="link" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="auth"
         options={{
           title: 'Settings',
           tabBarIcon: ({ color }) => <TabBarIcon name="cog" color={color} />,
