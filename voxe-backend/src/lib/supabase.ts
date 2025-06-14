@@ -2,11 +2,20 @@ import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
 
 // Environment variables
-const supabaseUrl = process.env.SUPABASE_URL || 'https://zwodcjaefewenwnyvldw.supabase.co';
-const supabaseKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3b2RjamFlZmV3ZW53bnl2bGR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk3ODIwNDEsImV4cCI6MjA2NTM1ODA0MX0.O7a5RapNBcMyxMQT93RFOB7nYj5q_JIBzKs2dUMXVhA';
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-// Create Supabase client
-const supabaseClient = createClient(supabaseUrl, supabaseKey);
+// Create Supabase clients
+const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+
+// Service role client for backend operations (bypasses RLS)
+const supabaseServiceClient = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
 // Types for database tables
 const User = {
@@ -89,6 +98,7 @@ const refreshOAuthTokenFunction = async (userId: string, provider: string, newAc
 };
 
 export const supabase = supabaseClient;
+export const supabaseService = supabaseServiceClient;
 export const storeOAuthToken = storeOAuthTokenFunction;
 export const getOAuthToken = getOAuthTokenFunction;
 export const refreshOAuthToken = refreshOAuthTokenFunction; 

@@ -4,6 +4,8 @@ import cookieParser from 'cookie-parser';
 import 'dotenv/config';
 import authRouter from './api/auth/index.js';
 import voiceRouter from './api/voice/index.js';
+import aiRouter from './api/ai/index.js';
+import composioOAuthRouter from './api/composio/oauth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -19,6 +21,8 @@ app.use(cookieParser());
 // Routes
 app.use('/api/auth', authRouter);
 app.use('/api/voice', voiceRouter);
+app.use('/api/ai', aiRouter);
+app.use('/api/composio/oauth', composioOAuthRouter);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {

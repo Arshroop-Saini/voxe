@@ -17,9 +17,7 @@ const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/documents',
-  'https://www.googleapis.com/auth/presentations',
-  'https://www.googleapis.com/auth/chat.messages',
-  'https://www.googleapis.com/auth/forms'
+  'https://www.googleapis.com/auth/spreadsheets'
 ];
 
 // OAuth login route - redirects to Google auth
