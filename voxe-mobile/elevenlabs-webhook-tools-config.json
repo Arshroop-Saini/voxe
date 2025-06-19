@@ -1,0 +1,24 @@
+{
+  "type": "webhook",
+  "name": "gmail_send_email",
+  "description": "Sends an email via Gmail with support for to/cc/bcc recipients, subject, and body content. User must be authenticated with Gmail OAuth.",
+  "url": "https://your-backend-url.com/api/elevenlabs-webhook",
+  "method": "POST",
+  "headers": {
+    "Content-Type": "application/json",
+    "x-user-id": "{{user_id}}"
+  },
+  "body": {
+    "tool_name": "gmail_send_email",
+    "parameters": {
+      "to": "{{to}}",
+      "subject": "{{subject}}",
+      "body": "{{body}}",
+      "cc": "{{cc}}",
+      "bcc": "{{bcc}}"
+    },
+    "user_id": "{{user_id}}"
+  },
+  "expects_response": true,
+  "response_timeout_secs": 30
+} 

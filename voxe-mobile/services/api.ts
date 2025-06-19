@@ -15,9 +15,14 @@ export interface TranscriptionResponse {
 export interface TextProcessResponse {
   success: boolean;
   command: string;
-  intent: string;
-  parameters: Record<string, any>;
-  confidence: number;
+  aiResponse?: {
+    response: string;
+    toolsUsed: string[];
+    steps: number;
+    memoryContext: boolean;
+  };
+  requestId?: string;
+  error?: string;
 }
 
 export interface ApiError {
@@ -50,8 +55,26 @@ class ApiService {
   }
 
   async processText(text: string): Promise<TextProcessResponse> {
+    // Get user ID for the request
+    let userId: string | null = null;
+    try {
+      const { supabaseService } = await import('./supabase');
+      const user = await supabaseService.getCurrentUser();
+      userId = user?.id || null;
+    } catch (userError) {
+      console.error('Failed to get user ID for text processing:', userError);
+      throw new Error('User authentication required');
+    }
+
+    if (!userId) {
+      throw new Error('Please sign in to use text processing features');
+    }
+
     return this.request<TextProcessResponse>('/voice/process-text', {
       method: 'POST',
+      headers: {
+        'x-user-id': userId,
+      },
       body: JSON.stringify({ text }),
     });
   }
@@ -59,6 +82,24 @@ class ApiService {
   async processAudio(audioUri: string): Promise<TranscriptionResponse> {
     console.log('\n🌐 === API SERVICE: PROCESS AUDIO ===');
     console.log('📤 processAudio called with URI:', audioUri);
+    
+    // Get user ID for the request
+    console.log('🔍 Getting user ID from Supabase...');
+    let userId: string | null = null;
+    try {
+      const { supabaseService } = await import('./supabase');
+      const user = await supabaseService.getCurrentUser();
+      userId = user?.id || null;
+      console.log('✅ User ID retrieved:', userId ? `${userId.substring(0, 8)}...` : 'null');
+    } catch (userError) {
+      console.error('❌ Failed to get user ID:', userError);
+      throw new Error('User authentication required for voice processing');
+    }
+
+    if (!userId) {
+      console.error('❌ No user ID available');
+      throw new Error('Please sign in to use voice features');
+    }
     
     // Validate the audio URI
     if (!audioUri || typeof audioUri !== 'string') {
@@ -149,12 +190,15 @@ class ApiService {
     // Use fetch directly for file uploads (don't use the request helper)
     const url = `${API_BASE_URL}/voice/process-audio`;
     console.log('🌐 Target URL:', url);
-    console.log('📤 Sending HTTP POST request...');
+    console.log('📤 Sending HTTP POST request with user ID:', userId ? `${userId.substring(0, 8)}...` : 'null');
     
     const requestStartTime = Date.now();
     
     const response = await fetch(url, {
       method: 'POST',
+      headers: {
+        'x-user-id': userId,
+      },
       // Don't set Content-Type header - let fetch set it automatically for FormData
       body: formData,
     });
@@ -197,6 +241,47 @@ class ApiService {
     
     console.log('✅ === API SERVICE: PROCESS AUDIO COMPLETED ===\n');
     return result;
+  }
+
+  async processVoiceInput(formData: FormData): Promise<{
+    transcription?: string;
+    aiResponse?: string;
+    success: boolean;
+    error?: string;
+  }> {
+    // Get user ID for the request
+    let userId: string | null = null;
+    try {
+      const { supabaseService } = await import('./supabase');
+      const user = await supabaseService.getCurrentUser();
+      userId = user?.id || null;
+    } catch (userError) {
+      console.error('Failed to get user ID for voice processing:', userError);
+      throw new Error('User authentication required');
+    }
+
+    if (!userId) {
+      throw new Error('Please sign in to use voice features');
+    }
+
+    // Use fetch directly for file uploads
+    const url = `${API_BASE_URL}/voice/process-input`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-user-id': userId,
+        // Don't set Content-Type for FormData, let browser set it with boundary
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || error.error || 'Voice processing failed');
+    }
+
+    return response.json();
   }
 
   async healthCheck(): Promise<{ status: string; message: string }> {
