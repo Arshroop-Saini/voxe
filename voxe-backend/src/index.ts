@@ -6,6 +6,7 @@ import authRouter from './api/auth/index.js';
 import aiRouter from './api/ai/index.js';
 import composioOAuthRouter from './api/composio/oauth.js';
 import chatRouter from './api/chat/index.js';
+import memoriesRouter from './api/memories/index.js';
 import elevenLabsRouter from './api/elevenlabs-webhook.js';
 import elevenLabsPostCallRouter from './api/elevenlabs-post-call-webhook.js';
 
@@ -29,6 +30,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/composio/oauth', composioOAuthRouter);
 app.use('/api/chat', chatRouter);
+app.use('/api/memories', memoriesRouter);
 
 // ElevenLabs webhooks
 app.use('/api/elevenlabs-webhook', elevenLabsRouter);
