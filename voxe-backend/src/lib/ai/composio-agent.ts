@@ -440,12 +440,20 @@ Your memory system will automatically provide relevant context from previous con
         await this.initialize();
       }
 
-      return userId ? 
-        await this.toolset.getTools({ 
+      if (userId) {
+        console.log(`🔧 Getting user-specific tools for user: ${userId}`);
+        const userTools = await this.toolset.getTools({ 
           apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"]
-        }, userId) : this.tools;
+        }, userId);
+        console.log(`✅ Retrieved ${Object.keys(userTools).length} user-specific tools`);
+        return userTools;
+      } else {
+        console.log(`🔧 Using general tools (no user ID provided)`);
+        return this.tools;
+      }
     } catch (error) {
-      console.error('Error getting tools for user:', error);
+      console.error('❌ Error getting tools for user:', error);
+      console.log(`🔄 Falling back to general tools`);
       return this.tools; // Fallback to default tools
     }
   }

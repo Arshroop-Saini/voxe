@@ -58,6 +58,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="monitoring"
+        options={{
+          title: 'Monitoring',
+          tabBarIcon: ({ color }) => <TabBarIcon name="bell" color={color} />,
+          headerShown: false,
+        }}
+      />
+      <Tabs.Screen
         name="auth"
         options={{
           title: 'Settings',

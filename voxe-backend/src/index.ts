@@ -5,6 +5,8 @@ import 'dotenv/config';
 import authRouter from './api/auth/index.js';
 import aiRouter from './api/ai/index.js';
 import composioOAuthRouter from './api/composio/oauth.js';
+import composioWebhookRouter from './api/composio/webhook.js';
+import composioTriggersRouter from './api/composio/triggers.js';
 import chatRouter from './api/chat/index.js';
 import memoriesRouter from './api/memories/index.js';
 import elevenLabsRouter from './api/elevenlabs-webhook.js';
@@ -29,6 +31,8 @@ app.use(cookieParser());
 app.use('/api/auth', authRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/composio/oauth', composioOAuthRouter);
+app.use('/api/composio/webhook', composioWebhookRouter);
+app.use('/api/composio/triggers', composioTriggersRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/memories', memoriesRouter);
 

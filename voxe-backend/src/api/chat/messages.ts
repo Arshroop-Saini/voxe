@@ -94,7 +94,11 @@ export async function sendMessage(req: Request, res: Response): Promise<void> {
     console.log(`🧠 Memory context retrieved for user ${userId}:`, memories ? 'Found relevant memories' : 'No memories found');
 
     // Get Composio tools for user (with entity context)
-    const tools = await composioAgent.getToolsForUser(userId);
+    const allTools = await composioAgent.getToolsForUser(userId);
+    
+    // 🔧 FIX: OpenAI has a 128 tool limit, filter to most essential tools
+    const tools = filterEssentialTools(allTools, currentPrompt);
+    console.log(`🔧 Filtered tools: ${Object.keys(tools).length} of ${Object.keys(allTools).length} tools selected`);
 
     // 🎯 STEP 3: Use OpenAI provider with memory as system context (User's specified pattern)
     const systemPrompt = `You are Voxe, an AI-powered productivity assistant with access to Gmail, Google Calendar, Google Docs, Google Drive, Google Sheets, and Notion.
@@ -119,76 +123,99 @@ ${memories ? `RELEVANT MEMORIES FROM PREVIOUS CONVERSATIONS:\n${memories}\n` : '
 Use the above memories to provide personalized and contextual responses.`;
 
     // Stream response with OpenAI provider and memory context
-    const result = streamText({
-      model: openai('gpt-4o-mini'), // 🎯 Using OpenAI provider as specified
-      messages: allMessages,
-      tools,
-      maxSteps: 1, // 🔧 FIX: Reduce to 1 to prevent multiple response cycles
-      system: systemPrompt, // 🎯 Memory context in system prompt
-      experimental_generateMessageId: () => uuidv4(), // 🔧 FIX: Generate proper UUIDs
-
-      // Save messages and add memories on completion
-      async onFinish({ response }) {
-        try {
-          // 🔧 FIX: Only save the new user message and AI response
-          // Don't re-save all previous messages
-          const newMessages = [newUserMessage];
-          
-          // Add AI response messages with proper UUIDs
-          response.messages.forEach(msg => {
-            // Only save standard message roles, skip tool messages
-            if (msg.role !== 'tool') {
-              newMessages.push({
-                id: uuidv4(),
-                role: msg.role as 'user' | 'assistant' | 'system',
-                content: normalizeMessageContent(msg.content),
-                createdAt: new Date()
-              });
-            }
-          });
-
-          // Save only the new messages to database
-          await saveChatMessages(threadId, newMessages);
-
-          // 🎯 STEP 4: Add memories after interaction (User's specified pattern)
-          // Convert only new messages to the format expected by addMemories
-          const memoryMessages = newMessages.map(msg => ({
-            role: msg.role,
-            content: [{ type: "text", text: msg.content }]
-          }));
-
-          await mem0Service.addMemoriesAfterInteraction(memoryMessages, memoryContext);
-
-          console.log(`✅ Saved ${newMessages.length} new messages for thread: ${threadId}`);
-        } catch (error) {
-          console.error('Error saving chat messages or adding memories:', error);
-        }
-      },
-    });
-
-    // 🔧 FIX: Ensure proper streaming response without duplication
-    const streamResponse = result.toDataStreamResponse();
+    console.log(`🎯 Starting streamText with ${Object.keys(tools).length} tools`);
     
-    // Return the stream response directly to prevent double processing
-    res.setHeader('Content-Type', streamResponse.headers.get('Content-Type') || 'text/plain');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    let result;
+    try {
+      result = streamText({
+        model: openai('gpt-4o-mini'), // 🎯 Using OpenAI provider as specified
+        messages: allMessages,
+        tools,
+        maxSteps: 1, // 🔧 FIX: Reduce to 1 to prevent multiple response cycles
+        system: systemPrompt, // 🎯 Memory context in system prompt
+        experimental_generateMessageId: () => uuidv4(), // 🔧 FIX: Generate proper UUIDs
 
-    // Stream the response body directly
-    const reader = streamResponse.body?.getReader();
-    if (reader) {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
+        // Add error handling for streaming
+        onError: (error) => {
+          console.error('❌ Streaming error:', error);
+        },
+
+        // Save messages and add memories on completion
+        async onFinish({ response }) {
+          try {
+            console.log('🏁 Stream finished, saving messages...');
+            
+            // 🔧 FIX: Only save the new user message and AI response
+            // Don't re-save all previous messages
+            const newMessages = [newUserMessage];
+            
+            // Add AI response messages with proper UUIDs
+            response.messages.forEach(msg => {
+              // Only save standard message roles, skip tool messages
+              if (msg.role !== 'tool') {
+                newMessages.push({
+                  id: uuidv4(),
+                  role: msg.role as 'user' | 'assistant' | 'system',
+                  content: normalizeMessageContent(msg.content),
+                  createdAt: new Date()
+                });
+              }
+            });
+
+            // Save only the new messages to database
+            await saveChatMessages(threadId, newMessages);
+
+            // 🎯 STEP 4: Add memories after interaction (User's specified pattern)
+            // Convert only new messages to the format expected by addMemories
+            const memoryMessages = newMessages.map(msg => ({
+              role: msg.role,
+              content: [{ type: "text", text: msg.content }]
+            }));
+
+            await mem0Service.addMemoriesAfterInteraction(memoryMessages, memoryContext);
+
+            console.log(`✅ Saved ${newMessages.length} new messages for thread: ${threadId}`);
+          } catch (error) {
+            console.error('❌ Error saving chat messages or adding memories:', error);
+          }
+        },
+      });
+      
+      console.log('✅ streamText created successfully');
+    } catch (error) {
+      console.error('❌ Error creating streamText:', error);
+      throw error;
     }
-    
-    res.end();
+
+    // 🔧 FIX: Use the standard toDataStreamResponse() method instead of manual streaming
+    try {
+      console.log('🎯 Converting to DataStreamResponse...');
+      const streamResponse = result.toDataStreamResponse();
+      
+      // Set appropriate headers
+      res.setHeader('Content-Type', streamResponse.headers.get('Content-Type') || 'text/plain');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      
+      // Stream the response
+      const reader = streamResponse.body?.getReader();
+      if (reader) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+      
+      res.end();
+    } catch (error) {
+      console.error('❌ Error converting to DataStreamResponse:', error);
+      throw error;
+    }
 
   } catch (error) {
     console.error('Error in sendMessage:', error);
@@ -358,6 +385,75 @@ async function saveChatMessages(threadId: string, messages: Message[]): Promise<
     console.error('Error in saveChatMessages:', error);
     throw error;
   }
+}
+
+/**
+ * Filter tools to stay within OpenAI's 128 tool limit
+ * Prioritizes tools based on user prompt and essential functionality
+ */
+function filterEssentialTools(allTools: Record<string, any>, userPrompt: string): Record<string, any> {
+  const MAX_TOOLS = 120; // Leave some buffer under 128 limit
+  const toolEntries = Object.entries(allTools);
+  
+  if (toolEntries.length <= MAX_TOOLS) {
+    return allTools; // No filtering needed
+  }
+  
+  // Priority categories based on user prompt keywords
+  const emailKeywords = ['email', 'send', 'reply', 'message', 'mail', 'gmail'];
+  const calendarKeywords = ['calendar', 'schedule', 'meeting', 'event', 'appointment'];
+  const docsKeywords = ['document', 'doc', 'write', 'create', 'edit', 'draft'];
+  const driveKeywords = ['file', 'drive', 'upload', 'download', 'folder', 'share'];
+  const sheetsKeywords = ['sheet', 'spreadsheet', 'data', 'calculate', 'table'];
+  const notionKeywords = ['notion', 'note', 'page', 'database', 'workspace'];
+  
+  const promptLower = userPrompt.toLowerCase();
+  
+  // Score tools based on relevance to user prompt
+  const scoredTools = toolEntries.map(([name, tool]) => {
+    let score = 0;
+    const toolNameLower = name.toLowerCase();
+    
+    // Base scores for essential operations
+    if (toolNameLower.includes('gmail')) {
+      score += emailKeywords.some(kw => promptLower.includes(kw)) ? 10 : 3;
+    } else if (toolNameLower.includes('calendar')) {
+      score += calendarKeywords.some(kw => promptLower.includes(kw)) ? 10 : 2;
+    } else if (toolNameLower.includes('docs')) {
+      score += docsKeywords.some(kw => promptLower.includes(kw)) ? 10 : 2;
+    } else if (toolNameLower.includes('drive')) {
+      score += driveKeywords.some(kw => promptLower.includes(kw)) ? 10 : 2;
+    } else if (toolNameLower.includes('sheets')) {
+      score += sheetsKeywords.some(kw => promptLower.includes(kw)) ? 10 : 2;
+    } else if (toolNameLower.includes('notion')) {
+      score += notionKeywords.some(kw => promptLower.includes(kw)) ? 10 : 2;
+    }
+    
+    // Boost essential operations
+    if (toolNameLower.includes('send') || toolNameLower.includes('create') || toolNameLower.includes('get')) {
+      score += 2;
+    }
+    
+    // Reduce score for very specific/niche tools
+    if (toolNameLower.includes('advanced') || toolNameLower.includes('batch') || toolNameLower.includes('bulk')) {
+      score -= 1;
+    }
+    
+    return { name, tool, score };
+  });
+  
+  // Sort by score (highest first) and take top tools
+  const topTools = scoredTools
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_TOOLS);
+  
+  // Convert back to object format
+  const filteredTools: Record<string, any> = {};
+  topTools.forEach(({ name, tool }) => {
+    filteredTools[name] = tool;
+  });
+  
+  return filteredTools;
 }
 
 /**
