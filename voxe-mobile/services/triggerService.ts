@@ -56,31 +56,63 @@ class TriggerService {
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
     
+    console.log(`🌐 Making request to: ${url}`);
+    console.log(`🔧 Request options:`, { method: options.method || 'GET', ...options });
+    
     // Get user ID for authenticated requests
     let userId: string | null = null;
     try {
       const { supabaseService } = await import('./supabase');
       const user = await supabaseService.getCurrentUser();
       userId = user?.id || null;
+      console.log(`👤 User ID for request: ${userId}`);
     } catch (userError) {
       console.warn('Could not get user ID for trigger request:', userError);
     }
     
-    const response = await fetch(url, {
+    const requestConfig = {
       ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(userId && { 'x-user-id': userId }),
         ...options.headers,
       },
-    });
+    };
+    
+    console.log(`📤 Final request config:`, requestConfig);
+    
+    try {
+      console.log(`🚀 Starting fetch request...`);
+      const response = await fetch(url, requestConfig);
+      
+      console.log(`📥 Response received:`, {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || error.error || 'Trigger API request failed');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Request failed with status ${response.status}:`, errorText);
+        
+        let error;
+        try {
+          error = JSON.parse(errorText);
+        } catch {
+          error = { message: errorText };
+        }
+        
+        throw new Error(error.message || error.error || `Request failed with status ${response.status}`);
+      }
+
+      const responseData = await response.json();
+      console.log(`✅ Response data:`, responseData);
+      return responseData;
+    } catch (fetchError) {
+      console.error(`🚨 Fetch error:`, fetchError);
+      throw fetchError;
     }
-
-    return response.json();
   }
 
   /**
@@ -197,16 +229,19 @@ class TriggerService {
    */
   async deleteTrigger(triggerId: string): Promise<boolean> {
     try {
-      await this.request<ApiResponse<void>>(
+      console.log(`🔄 Frontend: Calling DELETE /composio/triggers/${triggerId}`);
+      
+      const response = await this.request<ApiResponse<void>>(
         `/composio/triggers/${triggerId}`,
         {
           method: 'DELETE',
         }
       );
-
+      
+      console.log('✅ Frontend: Delete response:', response);
       return true;
     } catch (error) {
-      console.error('Error deleting trigger:', error);
+      console.error('❌ Frontend: Error deleting trigger:', error);
       throw error;
     }
   }

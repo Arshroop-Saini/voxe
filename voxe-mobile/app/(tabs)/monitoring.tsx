@@ -236,27 +236,101 @@ export default function MonitoringScreen() {
   };
 
   const handleDeleteTrigger = async (trigger: TriggerConfig) => {
+    const isActive = trigger.is_active;
+    const action = isActive ? 'disable' : 'reactivate';
+    
+    console.log(`🔄 ${action} button pressed for trigger:`, trigger.id);
+    console.log('🗑️ Trigger details:', { 
+      id: trigger.id, 
+      app_name: trigger.app_name, 
+      trigger_name: trigger.trigger_name,
+      composio_trigger_id: trigger.composio_trigger_id,
+      is_active: trigger.is_active
+    });
+    
+    const confirmMessage = isActive 
+      ? `Are you sure you want to disable the ${trigger.trigger_name} trigger for ${trigger.app_name}? You can reactivate it later.`
+      : `Reactivate the ${trigger.trigger_name} trigger for ${trigger.app_name}?`;
+      
+    const buttonText = isActive ? 'Disable' : 'Reactivate';
+    const successMessage = isActive ? 'Trigger disabled successfully!' : 'Trigger reactivated successfully!';
+    
     Alert.alert(
-      'Delete Trigger',
-      `Are you sure you want to delete the ${trigger.trigger_name} trigger for ${trigger.app_name}?`,
+      `${isActive ? 'Disable' : 'Reactivate'} Trigger`,
+      confirmMessage,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: buttonText,
+          style: isActive ? 'destructive' : 'default',
           onPress: async () => {
             try {
-              await triggerService.deleteTrigger(trigger.id);
+              console.log(`🔄 Starting ${action} process for trigger:`, trigger.id);
+              
+              if (isActive) {
+                // Disable trigger
+                const result = await triggerService.deleteTrigger(trigger.id);
+                console.log('✅ Disable result:', result);
+              } else {
+                // Reactivate trigger by creating it again (will reactivate existing)
+                const result = await triggerService.createTrigger({
+                  user_id: trigger.user_id,
+                  app_name: trigger.app_name,
+                  trigger_name: trigger.trigger_name,
+                  config: trigger.config
+                });
+                console.log('✅ Reactivate result:', result);
+              }
+              
+              console.log('🔄 Reloading triggers list...');
               await loadTriggers();
-              Alert.alert('Success', 'Trigger deleted successfully!');
+              console.log('✅ Triggers reloaded');
+              
+              Alert.alert('Success', successMessage);
             } catch (error) {
-              console.error('Error deleting trigger:', error);
-              Alert.alert('Error', 'Failed to delete trigger.');
+              console.error(`❌ Error ${action}ing trigger:`, error);
+              Alert.alert('Error', `Failed to ${action} trigger: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
           },
         },
       ]
     );
+    
+    // Original confirmation dialog (commented out for testing)
+    /*
+    Alert.alert(
+      'Delete Trigger',
+      `Are you sure you want to delete the ${trigger.trigger_name} trigger for ${trigger.app_name}?`,
+      [
+        { 
+          text: 'Cancel', 
+          style: 'cancel',
+          onPress: () => console.log('🚫 Delete cancelled by user')
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            console.log('🔥 User confirmed delete - starting process...');
+            try {
+              console.log('🔄 Starting delete process for trigger:', trigger.id);
+              const result = await triggerService.deleteTrigger(trigger.id);
+              console.log('✅ Delete result:', result);
+              
+              console.log('🔄 Reloading triggers list...');
+              await loadTriggers();
+              console.log('✅ Triggers reloaded');
+              
+              Alert.alert('Success', 'Trigger deleted successfully!');
+            } catch (error) {
+              console.error('❌ Error deleting trigger:', error);
+              Alert.alert('Error', `Failed to delete trigger: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          },
+        },
+      ]
+    );
+    */
   };
 
   const testWebhook = async () => {
@@ -367,19 +441,28 @@ export default function MonitoringScreen() {
             </View>
           ) : (
             triggers.map((trigger) => (
-              <View key={trigger.id} style={styles.triggerCard}>
+              <View key={trigger.id} style={[
+                styles.triggerCard,
+                !trigger.is_active && styles.inactiveTriggerCard
+              ]}>
                 <View style={styles.triggerHeader}>
                   <View style={styles.triggerInfo}>
                     <FontAwesome 
                       name={getAppIcon(trigger.app_name)} 
                       size={20} 
-                      color="#007AFF" 
+                      color={trigger.is_active ? "#007AFF" : "#999"} 
                     />
                     <View style={styles.triggerDetails}>
-                      <Text style={styles.triggerTitle}>
+                      <Text style={[
+                        styles.triggerTitle,
+                        !trigger.is_active && styles.inactiveTriggerText
+                      ]}>
                         {getAppDisplayName(trigger.app_name)}
                       </Text>
-                      <Text style={styles.triggerSubtitle}>
+                      <Text style={[
+                        styles.triggerSubtitle,
+                        !trigger.is_active && styles.inactiveTriggerText
+                      ]}>
                         {trigger.trigger_name}
                       </Text>
                     </View>
@@ -402,10 +485,17 @@ export default function MonitoringScreen() {
                     </TouchableOpacity>
                     
                     <TouchableOpacity
-                      style={styles.deleteButton}
+                      style={[
+                        styles.deleteButton,
+                        !trigger.is_active && styles.reactivateButton
+                      ]}
                       onPress={() => handleDeleteTrigger(trigger)}
                     >
-                      <FontAwesome name="trash" size={16} color="#FF3B30" />
+                      <FontAwesome 
+                        name={trigger.is_active ? "trash" : "refresh"} 
+                        size={16} 
+                        color={trigger.is_active ? "#FF3B30" : "#34C759"} 
+                      />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -769,6 +859,17 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     padding: 8,
+  },
+  reactivateButton: {
+    backgroundColor: '#E8F5E8',
+    borderRadius: 4,
+  },
+  inactiveTriggerCard: {
+    opacity: 0.6,
+    backgroundColor: '#F5F5F5',
+  },
+  inactiveTriggerText: {
+    color: '#999',
   },
   triggerMeta: {
     borderTopWidth: 1,

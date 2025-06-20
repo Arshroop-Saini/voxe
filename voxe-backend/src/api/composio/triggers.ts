@@ -253,11 +253,14 @@ composioTriggersRouter.post('/:id/enable', async (req: Request, res: Response): 
 
     console.log(`🟢 Enabling trigger: ${id}`);
 
-    // Get the trigger first to find the composio_trigger_id
-    const triggers = await triggerService.getUserTriggers(''); // This needs to be improved
-    const trigger = triggers.find(t => t.id === id);
+    // Get the specific trigger by ID directly from database
+    const { data: trigger, error: fetchError } = await supabaseService
+      .from('trigger_configs')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-    if (!trigger || !trigger.composio_trigger_id) {
+    if (fetchError || !trigger || !trigger.composio_trigger_id) {
       res.status(404).json({ error: 'Trigger not found or missing Composio ID' });
       return;
     }
@@ -295,11 +298,14 @@ composioTriggersRouter.post('/:id/disable', async (req: Request, res: Response):
 
     console.log(`🔴 Disabling trigger: ${id}`);
 
-    // Get the trigger first to find the composio_trigger_id
-    const triggers = await triggerService.getUserTriggers(''); // This needs to be improved
-    const trigger = triggers.find(t => t.id === id);
+    // Get the specific trigger by ID directly from database
+    const { data: trigger, error: fetchError } = await supabaseService
+      .from('trigger_configs')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-    if (!trigger || !trigger.composio_trigger_id) {
+    if (fetchError || !trigger || !trigger.composio_trigger_id) {
       res.status(404).json({ error: 'Trigger not found or missing Composio ID' });
       return;
     }

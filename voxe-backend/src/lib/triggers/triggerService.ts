@@ -68,12 +68,67 @@ export class TriggerService {
   }
 
   /**
-   * Create a new trigger for a user
+   * Create a new trigger for a user or reactivate existing one
    */
   async createTrigger(params: CreateTriggerRequest): Promise<TriggerConfig> {
     try {
-      console.log(`🚀 Creating trigger for user ${params.user_id}: ${params.app_name} - ${params.trigger_name}`);
+      console.log(`🚀 Creating/reactivating trigger for user ${params.user_id}: ${params.app_name} - ${params.trigger_name}`);
       console.log(`📋 Config:`, JSON.stringify(params.config, null, 2));
+
+      // Check if trigger already exists (active or inactive)
+      const { data: existingTrigger, error: searchError } = await supabaseService
+        .from('trigger_configs')
+        .select('*')
+        .eq('user_id', params.user_id)
+        .eq('app_name', params.app_name)
+        .eq('trigger_name', params.trigger_name)
+        .single();
+
+      if (existingTrigger && !searchError) {
+        console.log(`🔄 Found existing trigger:`, existingTrigger);
+        
+        if (existingTrigger.is_active) {
+          console.log(`✅ Trigger is already active`);
+          return existingTrigger as TriggerConfig;
+        } else {
+          console.log(`🟢 Reactivating existing trigger...`);
+          
+          // Reactivate in Composio
+          if (existingTrigger.composio_trigger_id) {
+            try {
+              const result = await this.composio.triggers.enable({ 
+                triggerId: existingTrigger.composio_trigger_id 
+              });
+              console.log(`✅ Successfully enabled trigger in Composio:`, result);
+            } catch (enableError: any) {
+              console.warn('⚠️ Warning: Failed to enable trigger in Composio:', enableError.message);
+              // Continue with database update even if Composio enable fails
+            }
+          }
+          
+          // Update database to mark as active
+          const { data: updatedTrigger, error: updateError } = await supabaseService
+            .from('trigger_configs')
+            .update({ 
+              is_active: true,
+              config: params.config, // Update config in case it changed
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingTrigger.id)
+            .select()
+            .single();
+
+          if (updateError) {
+            throw new Error(`Failed to reactivate trigger in database: ${updateError.message}`);
+          }
+
+          console.log(`✅ Trigger successfully reactivated:`, updatedTrigger);
+          return updatedTrigger as TriggerConfig;
+        }
+      }
+
+      // No existing trigger found, create a new one
+      console.log(`🆕 Creating new trigger...`);
 
       // Get the user's entity
       const entity = await this.composio.getEntity(params.user_id);
@@ -177,7 +232,7 @@ export class TriggerService {
   }
 
   /**
-   * Get all triggers for a user
+   * Get all triggers for a user (both active and inactive)
    */
   async getUserTriggers(userId: string, appName?: string): Promise<TriggerConfig[]> {
     try {
@@ -190,7 +245,10 @@ export class TriggerService {
         query = query.eq('app_name', appName);
       }
 
-      const { data, error } = await query.order('created_at', { ascending: false });
+      // Get all triggers (active and inactive), ordered by active status first, then by creation date
+      const { data, error } = await query
+        .order('is_active', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) {
         throw new Error(`Failed to fetch triggers: ${error.message}`);
@@ -230,7 +288,7 @@ export class TriggerService {
   }
 
   /**
-   * Delete a trigger
+   * Delete a trigger (actually just disable it - don't remove from database)
    */
   async deleteTrigger(triggerId: string): Promise<boolean> {
     try {
@@ -245,47 +303,54 @@ export class TriggerService {
         throw new Error('Trigger not found');
       }
 
-      // Delete from Composio if we have the composio_trigger_id
+      console.log(`🔴 Disabling trigger: ${triggerId} (Composio ID: ${triggerConfig.composio_trigger_id})`);
+
+      // Disable in Composio backend using the correct method from docs
       if (triggerConfig.composio_trigger_id) {
         try {
-          // Try to disable the trigger first using entity method
-          const entity = await this.composio.getEntity(triggerConfig.user_id);
-          const activeTriggers = await entity.getActiveTriggers();
+          // Method 1: Using the triggers.disable() method directly (recommended from docs)
+          console.log(`🔄 Disabling trigger in Composio: ${triggerConfig.composio_trigger_id}`);
           
-          const triggerToDelete = activeTriggers.find((t: any) => 
-            t.id === triggerConfig.composio_trigger_id
-          );
+          const result = await this.composio.triggers.disable({ 
+            triggerId: triggerConfig.composio_trigger_id 
+          });
           
-          if (triggerToDelete) {
-            // Use entity method to disable instead of delete
-            try {
-              await (entity as any).disableTrigger?.(triggerConfig.composio_trigger_id);
-              console.log(`✅ Disabled trigger in Composio: ${triggerConfig.composio_trigger_id}`);
-            } catch (disableError) {
-              console.warn('Could not disable trigger in Composio, continuing with database deletion');
-            }
+          console.log(`✅ Successfully disabled trigger in Composio:`, result);
+          
+        } catch (composioError: any) {
+          console.warn('⚠️ Warning: Failed to disable trigger in Composio:', composioError.message);
+          
+          // Try alternative method using entity if the first method fails
+          try {
+            console.log(`🔄 Trying alternative method with entity...`);
+            const entity = await this.composio.getEntity(triggerConfig.user_id);
+            await entity.disableTrigger(triggerConfig.composio_trigger_id);
+            console.log(`✅ Successfully disabled trigger using entity method`);
+          } catch (entityError: any) {
+            console.warn('⚠️ Warning: Both disable methods failed:', entityError.message);
+            // Continue with database update even if Composio disable fails
           }
-        } catch (composioError) {
-          console.warn('Warning: Failed to disable trigger in Composio:', composioError);
-          // Continue with database deletion even if Composio deletion fails
         }
       }
 
-      // Delete from database
-      const { error: deleteError } = await supabaseService
+      // Mark as inactive in our database (don't delete)
+      const { error: updateError } = await supabaseService
         .from('trigger_configs')
-        .delete()
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', triggerId);
 
-      if (deleteError) {
-        throw new Error(`Failed to delete trigger from database: ${deleteError.message}`);
+      if (updateError) {
+        throw new Error(`Failed to update trigger status in database: ${updateError.message}`);
       }
 
-      console.log(`✅ Trigger deleted: ${triggerId}`);
+      console.log(`✅ Trigger successfully disabled and marked inactive: ${triggerId}`);
       return true;
 
     } catch (error: any) {
-      console.error('Error deleting trigger:', error);
+      console.error('❌ Error disabling trigger:', error);
       throw error;
     }
   }
@@ -484,20 +549,34 @@ export class TriggerService {
    */
   async enableTrigger(composioTriggerId: string): Promise<void> {
     try {
-      // Enable in Composio if needed - handle API compatibility
+      console.log(`🟢 Enabling trigger: ${composioTriggerId}`);
+      
+      // Enable in Composio using the correct method from docs
       try {
-        await (this.composio.triggers as any).enable?.({ triggerId: composioTriggerId });
-      } catch (composioError) {
-        console.warn('Could not enable trigger in Composio:', composioError);
+        const result = await this.composio.triggers.enable({ 
+          triggerId: composioTriggerId 
+        });
+        console.log(`✅ Successfully enabled trigger in Composio:`, result);
+      } catch (composioError: any) {
+        console.warn('⚠️ Warning: Could not enable trigger in Composio:', composioError.message);
+        
+        // Note: Entity class only has disableTrigger method according to docs
+        // No enableTrigger method available on Entity class
       }
       
-      // Update database
-              await supabaseService
-          .from('trigger_configs')
-          .update({ is_active: true })
-          .eq('composio_trigger_id', composioTriggerId);
+      // Update database status
+      const { error } = await supabaseService
+        .from('trigger_configs')
+        .update({ is_active: true })
+        .eq('composio_trigger_id', composioTriggerId);
+        
+      if (error) {
+        throw new Error(`Failed to update trigger status in database: ${error.message}`);
+      }
+      
+      console.log(`✅ Trigger enabled and database updated: ${composioTriggerId}`);
     } catch (error: any) {
-      console.error('Error enabling trigger:', error);
+      console.error('❌ Error enabling trigger:', error);
       throw error;
     }
   }
@@ -507,20 +586,40 @@ export class TriggerService {
    */
   async disableTrigger(composioTriggerId: string): Promise<void> {
     try {
-      // Disable in Composio if needed - handle API compatibility
+      console.log(`🔴 Disabling trigger: ${composioTriggerId}`);
+      
+      // Disable in Composio using the correct method from docs
       try {
-        await (this.composio.triggers as any).disable?.({ triggerId: composioTriggerId });
-      } catch (composioError) {
-        console.warn('Could not disable trigger in Composio:', composioError);
+        const result = await this.composio.triggers.disable({ 
+          triggerId: composioTriggerId 
+        });
+        console.log(`✅ Successfully disabled trigger in Composio:`, result);
+      } catch (composioError: any) {
+        console.warn('⚠️ Warning: Could not disable trigger in Composio:', composioError.message);
+        
+        // Try alternative method using entity
+        try {
+          const entity = await this.composio.getEntity('default'); // We may need user_id here
+          await entity.disableTrigger(composioTriggerId);
+          console.log(`✅ Successfully disabled trigger using entity method`);
+        } catch (entityError: any) {
+          console.warn('⚠️ Warning: Both disable methods failed:', entityError.message);
+        }
       }
       
-      // Update database
-      await supabaseService
+      // Update database status
+      const { error } = await supabaseService
         .from('trigger_configs')
         .update({ is_active: false })
         .eq('composio_trigger_id', composioTriggerId);
+        
+      if (error) {
+        throw new Error(`Failed to update trigger status in database: ${error.message}`);
+      }
+      
+      console.log(`✅ Trigger disabled and database updated: ${composioTriggerId}`);
     } catch (error: any) {
-      console.error('Error disabling trigger:', error);
+      console.error('❌ Error disabling trigger:', error);
       throw error;
     }
   }
