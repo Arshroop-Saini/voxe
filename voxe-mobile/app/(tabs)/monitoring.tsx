@@ -26,6 +26,10 @@ export default function MonitoringScreen() {
   const [appConnections, setAppConnections] = useState<Record<string, boolean>>({});
   const [selectedTriggerCard, setSelectedTriggerCard] = useState<string>('');
   const [loadingTriggers, setLoadingTriggers] = useState<boolean>(false);
+  const [actionQuery, setActionQuery] = useState<string>('');
+  const [showEditActionModal, setShowEditActionModal] = useState(false);
+  const [editingTrigger, setEditingTrigger] = useState<TriggerConfig | null>(null);
+  const [editActionQuery, setEditActionQuery] = useState<string>('');
 
   // Supported apps for MVP
   const supportedApps = [
@@ -205,6 +209,7 @@ export default function MonitoringScreen() {
         app_name: selectedApp,
         trigger_name: selectedTrigger,
         config,
+        action_query: actionQuery.trim() || undefined
       });
 
       setShowCreateModal(false);
@@ -212,6 +217,7 @@ export default function MonitoringScreen() {
       setSelectedTrigger('');
       setSelectedTriggerCard('');
       setTriggerConfig('{}');
+      setActionQuery('');
       await loadTriggers();
 
       Alert.alert('Success', 'Trigger created successfully!');
@@ -232,6 +238,32 @@ export default function MonitoringScreen() {
     } catch (error) {
       console.error('Error toggling trigger:', error);
       Alert.alert('Error', 'Failed to toggle trigger status.');
+    }
+  };
+
+  const handleEditAction = (trigger: TriggerConfig) => {
+    setEditingTrigger(trigger);
+    setEditActionQuery(trigger.action_query || '');
+    setShowEditActionModal(true);
+  };
+
+  const handleSaveAction = async () => {
+    if (!editingTrigger) return;
+
+    try {
+      await triggerService.updateTrigger(editingTrigger.id, {
+        action_query: editActionQuery.trim() || undefined
+      });
+
+      setShowEditActionModal(false);
+      setEditingTrigger(null);
+      setEditActionQuery('');
+      await loadTriggers();
+
+      Alert.alert('Success', 'Action updated successfully!');
+    } catch (error) {
+      console.error('Error updating action:', error);
+      Alert.alert('Error', `Failed to update action: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -485,6 +517,17 @@ export default function MonitoringScreen() {
                     </TouchableOpacity>
                     
                     <TouchableOpacity
+                      style={styles.editActionButton}
+                      onPress={() => handleEditAction(trigger)}
+                    >
+                      <FontAwesome 
+                        name="edit" 
+                        size={16} 
+                        color="#007AFF" 
+                      />
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
                       style={[
                         styles.deleteButton,
                         !trigger.is_active && styles.reactivateButton
@@ -499,6 +542,13 @@ export default function MonitoringScreen() {
                     </TouchableOpacity>
                   </View>
                 </View>
+                
+                {trigger.action_query && (
+                  <View style={styles.actionDisplay}>
+                    <Text style={styles.actionLabel}>Action:</Text>
+                    <Text style={styles.actionText}>{trigger.action_query}</Text>
+                  </View>
+                )}
                 
                 <View style={styles.triggerMeta}>
                   <Text style={styles.metaText}>
@@ -525,7 +575,14 @@ export default function MonitoringScreen() {
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <TouchableOpacity
-              onPress={() => setShowCreateModal(false)}
+              onPress={() => {
+                setShowCreateModal(false);
+                setSelectedApp('');
+                setSelectedTrigger('');
+                setSelectedTriggerCard('');
+                setTriggerConfig('{}');
+                setActionQuery('');
+              }}
             >
               <Text style={styles.cancelButton}>Cancel</Text>
             </TouchableOpacity>
@@ -671,6 +728,26 @@ export default function MonitoringScreen() {
                 </Text>
               </View>
             )}
+
+            {/* Action Query Input */}
+            {selectedTriggerCard && (
+              <View style={styles.formSection}>
+                <Text style={styles.formLabel}>Action (Optional)</Text>
+                <TextInput
+                  style={styles.actionInput}
+                  placeholder="e.g., 'draft a reply to this email', 'create a task in Notion', 'send a Slack message'"
+                  value={actionQuery}
+                  onChangeText={setActionQuery}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+                <Text style={styles.actionHint}>
+                  Enter a natural language description of what you want to happen when this trigger fires. 
+                  The AI will automatically execute this action using the appropriate tools. Leave empty for notifications only.
+                </Text>
+              </View>
+            )}
           </ScrollView>
           
           {/* Modal Footer */}
@@ -691,6 +768,73 @@ export default function MonitoringScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Edit Action Modal */}
+      <Modal
+        visible={showEditActionModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              onPress={() => {
+                setShowEditActionModal(false);
+                setEditingTrigger(null);
+                setEditActionQuery('');
+              }}
+            >
+              <Text style={styles.cancelButton}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Edit Action</Text>
+            <TouchableOpacity onPress={handleSaveAction}>
+              <Text style={styles.createButton}>Save</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {editingTrigger && (
+              <>
+                <View style={styles.formSection}>
+                  <Text style={styles.formLabel}>Trigger</Text>
+                  <View style={styles.triggerInfo}>
+                    <FontAwesome 
+                      name={getAppIcon(editingTrigger.app_name)} 
+                      size={20} 
+                      color="#007AFF" 
+                    />
+                    <View style={styles.triggerDetails}>
+                      <Text style={styles.triggerTitle}>
+                        {getAppDisplayName(editingTrigger.app_name)}
+                      </Text>
+                      <Text style={styles.triggerSubtitle}>
+                        {editingTrigger.trigger_name}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.formSection}>
+                  <Text style={styles.formLabel}>Action</Text>
+                  <TextInput
+                    style={styles.actionInput}
+                    placeholder="e.g., 'draft a reply to this email', 'create a task in Notion', 'send a Slack message'"
+                    value={editActionQuery}
+                    onChangeText={setEditActionQuery}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+                  <Text style={styles.actionHint}>
+                    Enter a natural language description of what you want to happen when this trigger fires. 
+                    The AI will automatically execute this action using the appropriate tools. Leave empty to remove the action.
+                  </Text>
+                </View>
+              </>
+            )}
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -1141,5 +1285,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff8f0',
     borderRadius: 8,
     marginVertical: 10,
+  },
+  actionInput: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    textAlignVertical: 'top',
+    minHeight: 80,
+  },
+  actionHint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 8,
+    fontStyle: 'italic',
+    lineHeight: 16,
+  },
+  actionDisplay: {
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#007AFF',
+  },
+  actionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginBottom: 4,
+  },
+  actionText: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 18,
+  },
+  editActionButton: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#f0f8ff',
+    borderWidth: 1,
+    borderColor: '#007AFF',
   },
 }); 

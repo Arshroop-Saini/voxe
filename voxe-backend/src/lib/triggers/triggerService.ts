@@ -1,5 +1,7 @@
 import { ComposioToolSet } from 'composio-core';
 import { supabaseService } from '../supabase.js';
+import { ComposioAgentService } from '../ai/composio-agent.js';
+import { mem0Service } from '../mem0/mem0Service.js';
 
 export interface TriggerConfig {
   id?: string;
@@ -9,6 +11,7 @@ export interface TriggerConfig {
   composio_trigger_id?: string;
   config: any;
   is_active?: boolean;
+  action_query?: string; // Natural language action to execute when trigger fires
   created_at?: string;
   updated_at?: string;
 }
@@ -30,6 +33,7 @@ export interface CreateTriggerRequest {
   app_name: string;
   trigger_name: string;
   config: any;
+  action_query?: string; // Optional natural language action
 }
 
 export interface TriggerEventData {
@@ -112,6 +116,7 @@ export class TriggerService {
             .update({ 
               is_active: true,
               config: params.config, // Update config in case it changed
+              action_query: params.action_query, // Update action query
               updated_at: new Date().toISOString()
             })
             .eq('id', existingTrigger.id)
@@ -197,6 +202,7 @@ export class TriggerService {
           trigger_name: params.trigger_name,
           composio_trigger_id: composioTriggerId,
           config: params.config,
+          action_query: params.action_query,
           is_active: true
         })
         .select()
@@ -379,8 +385,68 @@ export class TriggerService {
       // Log the event
       await this.logTriggerEvent(triggerConfig.id!, eventData);
 
-      // Process the event based on app and trigger type
+      // Process the event based on app and trigger type (notifications)
       await this.handleTriggerEvent(triggerConfig, eventData);
+
+      // Execute action if action_query is defined
+      if (triggerConfig.action_query && triggerConfig.action_query.trim()) {
+        console.log(`🚀 Executing action for trigger: "${triggerConfig.action_query}"`);
+        
+        try {
+          const actionResult = await this.executeTriggerAction(triggerConfig, eventData);
+          
+          if (actionResult.success) {
+            console.log(`✅ Action executed successfully in ${actionResult.executionTime}ms`);
+            console.log(`🔧 Tools used: ${actionResult.toolsUsed.join(', ')}`);
+            console.log(`📊 Response: ${actionResult.response.substring(0, 200)}...`);
+            
+            // Create notification about successful action execution
+            await this.createNotification(triggerConfig.user_id, {
+              type: 'action_executed',
+              title: 'Trigger Action Executed',
+              message: `Successfully executed: "${triggerConfig.action_query}"`,
+              data: {
+                triggerConfigId: triggerConfig.id,
+                actionQuery: triggerConfig.action_query,
+                toolsUsed: actionResult.toolsUsed,
+                executionTime: actionResult.executionTime,
+                response: actionResult.response.substring(0, 500) // Truncate for notification
+              }
+            });
+          } else {
+            console.error(`❌ Action execution failed: ${actionResult.error}`);
+            
+            // Create notification about failed action execution
+            await this.createNotification(triggerConfig.user_id, {
+              type: 'action_failed',
+              title: 'Trigger Action Failed',
+              message: `Failed to execute: "${triggerConfig.action_query}" - ${actionResult.error}`,
+              data: {
+                triggerConfigId: triggerConfig.id,
+                actionQuery: triggerConfig.action_query,
+                error: actionResult.error,
+                executionTime: actionResult.executionTime
+              }
+            });
+          }
+        } catch (actionError: any) {
+          console.error('❌ Error during action execution:', actionError);
+          
+          // Create notification about action execution error
+          await this.createNotification(triggerConfig.user_id, {
+            type: 'action_error',
+            title: 'Trigger Action Error',
+            message: `Error executing: "${triggerConfig.action_query}" - ${actionError.message}`,
+            data: {
+              triggerConfigId: triggerConfig.id,
+              actionQuery: triggerConfig.action_query,
+              error: actionError.message
+            }
+          });
+        }
+      } else {
+        console.log(`ℹ️ No action query defined for trigger ${triggerConfig.id}, skipping action execution`);
+      }
 
       console.log(`✅ Successfully processed webhook event for ${eventData.appName}`);
 
@@ -497,6 +563,199 @@ export class TriggerService {
         triggerConfigId: triggerConfig.id
       }
     });
+  }
+
+  /**
+   * Execute natural language action when trigger fires
+   * Reuses the exact same AI pipeline as chat interface
+   */
+  async executeTriggerAction(
+    triggerConfig: TriggerConfig, 
+    eventData: TriggerEventData
+  ): Promise<{
+    success: boolean;
+    response: string;
+    toolsUsed: string[];
+    executionTime: number;
+    error?: string;
+  }> {
+    const startTime = Date.now();
+    
+    try {
+      console.log(`🎯 Executing trigger action for user ${triggerConfig.user_id}`);
+      console.log(`📋 Action query: "${triggerConfig.action_query}"`);
+      console.log(`🔔 Trigger event: ${eventData.appName} - ${eventData.payload.trigger_name}`);
+
+      if (!triggerConfig.action_query) {
+        return {
+          success: false,
+          response: 'No action query defined for this trigger',
+          toolsUsed: [],
+          executionTime: Date.now() - startTime,
+          error: 'Missing action query'
+        };
+      }
+
+      // Format event data for AI context
+      const formattedEventData = this.formatEventDataForAI(eventData, triggerConfig);
+      
+      // Create action prompt with event context
+      const actionPrompt = `${triggerConfig.action_query}
+
+TRIGGER EVENT CONTEXT:
+${formattedEventData}
+
+Please execute the requested action using the appropriate tools based on the trigger event data above.`;
+
+      console.log(`🤖 Formatted action prompt:`, actionPrompt);
+
+      // Initialize Composio agent service (same as chat)
+      const composioAgent = new ComposioAgentService();
+      
+      // Execute action using the same workflow as chat
+      const result = await composioAgent.executeCommand(
+        actionPrompt,
+        triggerConfig.user_id,
+        5 // maxSteps - same as chat
+      );
+
+      const executionTime = Date.now() - startTime;
+      
+      console.log(`✅ Action executed successfully in ${executionTime}ms`);
+      console.log(`🔧 Tools used: ${result.toolsUsed.join(', ')}`);
+      console.log(`📊 Response: ${result.response.substring(0, 200)}...`);
+
+      return {
+        success: result.success,
+        response: result.response,
+        toolsUsed: result.toolsUsed,
+        executionTime,
+        error: result.success ? undefined : result.response
+      };
+
+    } catch (error: any) {
+      const executionTime = Date.now() - startTime;
+      console.error('❌ Error executing trigger action:', error);
+      
+      return {
+        success: false,
+        response: `Failed to execute action: ${error.message}`,
+        toolsUsed: [],
+        executionTime,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Format trigger event data for AI consumption
+   */
+  private formatEventDataForAI(eventData: TriggerEventData, triggerConfig: TriggerConfig): string {
+    const { appName, payload, metadata } = eventData;
+    
+    // Format based on app type for better AI understanding
+    switch (appName.toLowerCase()) {
+      case 'gmail':
+        return this.formatGmailEventForAI(payload);
+      
+      case 'slack':
+        return this.formatSlackEventForAI(payload);
+      
+      case 'github':
+        return this.formatGitHubEventForAI(payload);
+      
+      case 'googlecalendar':
+        return this.formatCalendarEventForAI(payload);
+      
+      default:
+        return this.formatGenericEventForAI(appName, payload, metadata);
+    }
+  }
+
+  /**
+   * Format Gmail event data for AI
+   */
+  private formatGmailEventForAI(payload: any): string {
+    return `EMAIL DETAILS:
+- From: ${payload.from || 'Unknown sender'}
+- To: ${payload.to || 'Unknown recipient'}
+- Subject: ${payload.subject || 'No subject'}
+- Body: ${payload.body || payload.snippet || 'No content available'}
+- Date: ${payload.date || payload.internalDate || 'Unknown date'}
+- Message ID: ${payload.id || 'Unknown ID'}
+- Thread ID: ${payload.threadId || 'Unknown thread'}
+- Labels: ${payload.labelIds?.join(', ') || 'No labels'}`;
+  }
+
+  /**
+   * Format Slack event data for AI
+   */
+  private formatSlackEventForAI(payload: any): string {
+    return `SLACK MESSAGE DETAILS:
+- Channel: ${payload.channel || 'Unknown channel'}
+- User: ${payload.user || 'Unknown user'}
+- Message: ${payload.text || 'No message content'}
+- Timestamp: ${payload.ts || 'Unknown timestamp'}
+- Thread: ${payload.thread_ts ? 'Part of thread' : 'New message'}
+- Message Type: ${payload.type || 'message'}`;
+  }
+
+  /**
+   * Format GitHub event data for AI
+   */
+  private formatGitHubEventForAI(payload: any): string {
+    const eventType = payload.action || 'unknown';
+    
+    if (payload.pull_request) {
+      return `GITHUB PULL REQUEST EVENT:
+- Action: ${eventType}
+- PR Title: ${payload.pull_request.title || 'No title'}
+- PR Number: #${payload.pull_request.number || 'Unknown'}
+- Author: ${payload.pull_request.user?.login || 'Unknown author'}
+- Repository: ${payload.repository?.full_name || 'Unknown repo'}
+- Branch: ${payload.pull_request.head?.ref || 'Unknown branch'}
+- Description: ${payload.pull_request.body || 'No description'}`;
+    }
+    
+    if (payload.commits) {
+      return `GITHUB COMMIT EVENT:
+- Repository: ${payload.repository?.full_name || 'Unknown repo'}
+- Branch: ${payload.ref || 'Unknown branch'}
+- Commits: ${payload.commits?.length || 0}
+- Latest Commit: ${payload.head_commit?.message || 'No commit message'}
+- Author: ${payload.head_commit?.author?.name || 'Unknown author'}`;
+    }
+    
+    return `GITHUB EVENT:
+- Action: ${eventType}
+- Repository: ${payload.repository?.full_name || 'Unknown repo'}
+- Event Data: ${JSON.stringify(payload, null, 2)}`;
+  }
+
+  /**
+   * Format Calendar event data for AI
+   */
+  private formatCalendarEventForAI(payload: any): string {
+    return `CALENDAR EVENT DETAILS:
+- Event Title: ${payload.summary || 'No title'}
+- Start Time: ${payload.start?.dateTime || payload.start?.date || 'Unknown start'}
+- End Time: ${payload.end?.dateTime || payload.end?.date || 'Unknown end'}
+- Description: ${payload.description || 'No description'}
+- Location: ${payload.location || 'No location'}
+- Attendees: ${payload.attendees?.map((a: any) => a.email).join(', ') || 'No attendees'}
+- Calendar: ${payload.organizer?.email || 'Unknown calendar'}
+- Event ID: ${payload.id || 'Unknown ID'}`;
+  }
+
+  /**
+   * Format generic event data for AI
+   */
+  private formatGenericEventForAI(appName: string, payload: any, metadata: any): string {
+    return `${appName.toUpperCase()} EVENT:
+- App: ${appName}
+- Trigger Type: ${payload.trigger_name || 'Unknown trigger'}
+- Event Data: ${JSON.stringify(payload, null, 2)}
+- Metadata: ${JSON.stringify(metadata, null, 2)}`;
   }
 
   /**

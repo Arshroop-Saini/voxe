@@ -8,6 +8,7 @@ export interface TriggerConfig {
   composio_trigger_id: string;
   config: any;
   is_active: boolean;
+  action_query?: string; // Natural language action to execute when trigger fires
   created_at: string;
   updated_at: string;
 }
@@ -29,6 +30,7 @@ export interface CreateTriggerRequest {
   app_name: string;
   trigger_name: string;
   config: any;
+  action_query?: string; // Optional natural language action
 }
 
 export interface AvailableTrigger {

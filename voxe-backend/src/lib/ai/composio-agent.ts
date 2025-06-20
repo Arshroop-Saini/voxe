@@ -44,11 +44,14 @@ export class ComposioAgentService {
       console.log('Initializing Composio AI Agent with Memory...');
       
       // Get tools for our core productivity apps
-      this.tools = await this.toolset.getTools({ 
+      const allTools = await this.toolset.getTools({ 
         apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"] 
       });
       
-      console.log(`Loaded ${Object.keys(this.tools).length} tools from Composio`);
+      // Filter to stay within OpenAI's 128 tool limit
+      this.tools = this.filterToolsForOpenAI(allTools);
+      
+      console.log(`Loaded ${Object.keys(this.tools).length} tools from Composio (filtered from ${Object.keys(allTools).length} available)`);
       console.log('Available apps: Gmail, Google Calendar, Google Docs, Google Drive, Google Sheets, Notion');
       console.log('Memory integration: Enabled with Mem0');
       
@@ -57,6 +60,86 @@ export class ComposioAgentService {
         console.error('Failed to initialize Composio agent:', error);
         throw new Error('Failed to initialize AI agent with tools');
       }
+  }
+
+  /**
+   * Filter tools to stay within OpenAI's 128 tool limit
+   * Prioritizes essential tools for each app
+   */
+  private filterToolsForOpenAI(allTools: Record<string, CoreTool>): Record<string, CoreTool> {
+    const MAX_TOOLS = 128;
+    const toolEntries = Object.entries(allTools);
+    
+    if (toolEntries.length <= MAX_TOOLS) {
+      return allTools;
+    }
+
+    // Priority order for tools (most important first)
+    const toolPriorities = [
+      // Gmail essentials
+      'gmail_send_email',
+      'gmail_get_messages',
+      'gmail_create_draft',
+      'gmail_reply_to_email',
+      'gmail_search_emails',
+      
+      // Calendar essentials
+      'googlecalendar_create_event',
+      'googlecalendar_list_events',
+      'googlecalendar_update_event',
+      'googlecalendar_delete_event',
+      'googlecalendar_find_free_time',
+      
+      // Docs essentials
+      'googledocs_create_document',
+      'googledocs_get_document',
+      'googledocs_update_document',
+      'googledocs_share_document',
+      
+      // Drive essentials
+      'googledrive_upload_file',
+      'googledrive_list_files',
+      'googledrive_create_folder',
+      'googledrive_share_file',
+      'googledrive_download_file',
+      
+      // Sheets essentials
+      'googlesheets_create_spreadsheet',
+      'googlesheets_get_values',
+      'googlesheets_update_values',
+      'googlesheets_append_values',
+      
+      // Notion essentials
+      'notion_create_page',
+      'notion_get_page',
+      'notion_update_page',
+      'notion_search_pages',
+      'notion_create_database_entry'
+    ];
+
+    const filteredTools: Record<string, CoreTool> = {};
+    let toolCount = 0;
+
+    // First, add priority tools
+    for (const toolName of toolPriorities) {
+      if (toolCount >= MAX_TOOLS) break;
+      if (allTools[toolName]) {
+        filteredTools[toolName] = allTools[toolName];
+        toolCount++;
+      }
+    }
+
+    // Then add remaining tools until we hit the limit
+    for (const [toolName, tool] of toolEntries) {
+      if (toolCount >= MAX_TOOLS) break;
+      if (!filteredTools[toolName]) {
+        filteredTools[toolName] = tool;
+        toolCount++;
+      }
+    }
+
+    console.log(`Filtered tools from ${toolEntries.length} to ${toolCount} to stay within OpenAI limit`);
+    return filteredTools;
   }
 
   // 🎯 Memory operations are now handled automatically by the Mem0 model!
@@ -105,9 +188,9 @@ export class ComposioAgentService {
 
       // Configure tools with entity context if userId provided
       const toolsToUse = userId ? 
-        await this.toolset.getTools({ 
+        this.filterToolsForOpenAI(await this.toolset.getTools({ 
           apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"]
-        }, userId) : this.tools;
+        }, userId)) : this.tools;
 
       // 🎯 STEP 2: Use retrieveMemories() for context (User's specified pattern)
       let systemPrompt = `You are Voxe, an AI-powered productivity assistant that excels at multi-step workflows across Gmail, Google Calendar, Google Docs, Google Drive, Google Sheets, and Notion.`;
@@ -225,9 +308,9 @@ Your memory system will automatically provide relevant context from previous int
 
       // Configure tools with entity context if userId provided
       const toolsToUse = userId ? 
-        await this.toolset.getTools({ 
+        this.filterToolsForOpenAI(await this.toolset.getTools({ 
           apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"]
-        }, userId) : this.tools;
+        }, userId)) : this.tools;
 
       // 🎯 STEP 2: Use retrieveMemories() for context (User's specified pattern)
       let systemPrompt = `You are Voxe, an AI-powered productivity assistant that excels at multi-step workflows across Gmail, Google Calendar, Google Docs, Google Drive, Google Sheets, and Notion.`;
@@ -351,9 +434,9 @@ Your memory system will automatically provide relevant context from previous int
 
       // Configure tools with entity context if userId provided
       const toolsToUse = userId ? 
-        await this.toolset.getTools({ 
+        this.filterToolsForOpenAI(await this.toolset.getTools({ 
           apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"]
-        }, userId) : this.tools;
+        }, userId)) : this.tools;
 
       // 🎯 STEP 2: Use retrieveMemories() for context (User's specified pattern)
       let systemPrompt = `You are Voxe, an AI-powered productivity assistant in chat mode. You excel at conversational interactions and multi-step workflows across Gmail, Google Calendar, Google Docs, Google Drive, Google Sheets, and Notion.`;
@@ -445,8 +528,9 @@ Your memory system will automatically provide relevant context from previous con
         const userTools = await this.toolset.getTools({ 
           apps: ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "notion"]
         }, userId);
-        console.log(`✅ Retrieved ${Object.keys(userTools).length} user-specific tools`);
-        return userTools;
+        const filteredTools = this.filterToolsForOpenAI(userTools);
+        console.log(`✅ Retrieved ${Object.keys(filteredTools).length} user-specific tools (filtered from ${Object.keys(userTools).length})`);
+        return filteredTools;
       } else {
         console.log(`🔧 Using general tools (no user ID provided)`);
         return this.tools;
