@@ -202,6 +202,173 @@ export class SupermemoryClient {
     if (!apiKey) return 'NOT_SET';
     return `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 8)}`;
   }
+
+  /**
+   * Search memories for Gmail trigger context enhancement
+   * Optimized for finding email history from specific senders
+   * @param userId - User ID for container filtering
+   * @param senderEmail - Email address of the sender to search for
+   * @param query - Optional search query (defaults to sender-based search)
+   * @returns Promise<SearchResult> - Search results with email history
+   */
+  public async searchEmailHistory(
+    userId: string,
+    senderEmail: string,
+    query?: string
+  ): Promise<{
+    success: boolean;
+    results: Array<{
+      documentId: string;
+      content: string;
+      score: number;
+      metadata: Record<string, any>;
+      title: string | null;
+      summary: string | null;
+      createdAt: string;
+    }>;
+    total: number;
+    timing: number;
+    error?: string;
+  }> {
+    // Use a simple, guaranteed valid search query
+    // The container tags will handle the filtering by sender
+    let searchQuery = "search relavant emails history of this user.";
+    
+    // Ensure query is valid and not empty
+    if (query && query.trim().length > 0) {
+      // Use provided query but keep it simple
+      searchQuery = query.trim();
+    }
+    
+    console.log(`🔍 Searching email history for user ${userId} from sender ${senderEmail}`);
+    console.log(`📝 Search query: "${searchQuery}" (length: ${searchQuery.length})`);
+
+    const searchParams = {
+      q: searchQuery,
+      containerTags: [`user_${userId}`, `sender_${senderEmail}`],
+      limit: 5
+      // Removed all optional parameters to simplify the request
+    };
+
+    console.log(`🎯 Search parameters:`, JSON.stringify(searchParams, null, 2));
+
+    // Validate search parameters before sending
+    if (!searchParams.q || searchParams.q.trim().length === 0) {
+      console.error(`❌ Invalid search query: "${searchParams.q}"`);
+      return {
+        success: false,
+        results: [],
+        total: 0,
+        timing: 0,
+        error: 'Search query cannot be empty'
+      };
+    }
+
+    try {
+      const startTime = Date.now();
+      
+      const response = await this.client.search.execute(searchParams);
+      const searchTime = Date.now() - startTime;
+
+      console.log(`⚡ Search completed in ${searchTime}ms`);
+      console.log(`📊 Found ${response.total} total results, returning ${response.results.length} results`);
+
+      // Process and format results for LLM consumption
+      const formattedResults = response.results.map(result => ({
+        documentId: result.documentId,
+        content: result.chunks.map(chunk => chunk.content).join('\n'),
+        score: result.score,
+        metadata: result.metadata || {},
+        title: result.title,
+        summary: result.summary || null,
+        createdAt: result.createdAt
+      }));
+
+      return {
+        success: true,
+        results: formattedResults,
+        total: response.total,
+        timing: searchTime,
+      };
+
+    } catch (error: any) {
+      console.error('❌ Failed to search email history:', error);
+      
+      // Enhanced error logging for debugging
+      if (error.status === 500) {
+        console.error(`🔥 Supermemory server error - API may be down or overloaded`);
+        console.error(`🔍 Failed search parameters:`, JSON.stringify(searchParams, null, 2));
+      } else if (error.status === 400) {
+        console.error(`📋 Invalid search parameters:`, JSON.stringify(searchParams, null, 2));
+        console.error(`🔍 Query validation - Length: ${searchParams.q.length}, Content: "${searchParams.q}"`);
+      } else if (error.status === 401) {
+        console.error(`🔑 Authentication failed - check API key`);
+      }
+      
+      return {
+        success: false,
+        results: [],
+        total: 0,
+        timing: 0,
+        error: `Supermemory API error (${error.status || 'unknown'}): ${error.message || 'Search failed'}`
+      };
+    }
+  }
+
+  /**
+   * Advanced search with custom parameters
+   * For more complex search scenarios beyond basic email history
+   */
+  public async searchMemories(
+    searchParams: {
+      q: string;
+      containerTags?: string[];
+      limit?: number;
+      documentThreshold?: number;
+      chunkThreshold?: number;
+      rerank?: boolean;
+      includeSummary?: boolean;
+      includeFullDocs?: boolean;
+      filters?: any;
+    }
+  ): Promise<{
+    success: boolean;
+    results: any[];
+    total: number;
+    timing: number;
+    error?: string;
+  }> {
+    try {
+      const startTime = Date.now();
+      const response = await this.client.search.execute({
+        limit: 10,
+        documentThreshold: 0.3,
+        chunkThreshold: 0.3,
+        rerank: false,
+        includeSummary: false,
+        includeFullDocs: false,
+        ...searchParams
+      });
+      const searchTime = Date.now() - startTime;
+
+      return {
+        success: true,
+        results: response.results,
+        total: response.total,
+        timing: searchTime
+      };
+
+    } catch (error: any) {
+      console.error('❌ Failed to search memories:', error);
+      return {
+        success: false,
+        results: [],
+        total: 0,
+        timing: 0,
+        error: error.message || 'Unknown search error'
+      };
+    }
+  }
 }
 
 // Export singleton instance

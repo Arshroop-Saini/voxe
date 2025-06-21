@@ -345,7 +345,7 @@ ${email.content}
   private generateContainerTags(email: ProcessedEmail, userId: string): string[] {
     return [
       `user_${userId}`,
-      `sender_${email.senderDomain}`,
+      `sender_${email.senderEmail}`, // Use full email address instead of domain
       'email_primary_inbox',
       ...(email.isImportant ? ['email_important'] : []),
       ...(email.hasAttachments ? ['email_attachments'] : [])

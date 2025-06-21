@@ -2,6 +2,7 @@ import { ComposioToolSet } from 'composio-core';
 import { supabaseService } from '../supabase.js';
 import { ComposioAgentService } from '../ai/composio-agent.js';
 import { mem0Service } from '../mem0/mem0Service.js';
+import { EmailContextService } from '../../services/emailContextService.js';
 
 export interface TriggerConfig {
   id?: string;
@@ -53,6 +54,7 @@ export interface TriggerEventData {
  */
 export class TriggerService {
   private composio: ComposioToolSet;
+  private emailContextService: EmailContextService;
 
   constructor() {
     // Enable debug logging if environment variable is set
@@ -64,11 +66,13 @@ export class TriggerService {
       apiKey: process.env.COMPOSIO_API_KEY
     });
     
+    this.emailContextService = new EmailContextService();
+    
     if (!process.env.COMPOSIO_API_KEY) {
       console.warn('Composio API key not configured. Trigger features will be limited.');
     }
     
-    console.log('🔄 TriggerService initialized');
+    console.log('🔄 TriggerService initialized with email context enhancement');
   }
 
   /**
@@ -599,15 +603,113 @@ export class TriggerService {
       // Format event data for AI context
       const formattedEventData = this.formatEventDataForAI(eventData, triggerConfig);
       
-      // Create action prompt with event context
+      // Enhanced context for Gmail triggers with comprehensive error handling
+      let enhancedContext = '';
+      let contextMetrics = null;
+      
+      if (this.emailContextService.isGmailTrigger(eventData)) {
+        console.log(`📧 Detected Gmail trigger - enhancing with email history context`);
+        const contextStartTime = Date.now();
+        
+        try {
+          const senderEmail = this.emailContextService.extractSenderEmail(eventData.payload);
+          
+          if (senderEmail) {
+            console.log(`👤 Extracted sender email: ${senderEmail}`);
+            
+            // Add timeout for context enhancement to prevent hanging
+            const contextTimeout = 8000; // 8 seconds max for context enhancement
+            const contextPromise = this.emailContextService.getGmailTriggerContext(
+              triggerConfig.user_id,
+              senderEmail,
+              eventData.payload
+            );
+            
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('Context enhancement timeout')), contextTimeout);
+            });
+            
+            const contextResult = await Promise.race([contextPromise, timeoutPromise]);
+            const contextTime = Date.now() - contextStartTime;
+            
+            if (contextResult.success) {
+              enhancedContext = this.emailContextService.formatContextForAgent(contextResult.enhancedContext);
+              contextMetrics = contextResult.enhancedContext.performanceMetrics;
+              
+              console.log(`✅ Enhanced context prepared in ${contextTime}ms:`);
+              console.log(`   📧 ${contextResult.enhancedContext.emailHistory.length} emails found`);
+              console.log(`   🧠 ${contextResult.enhancedContext.mem0Memories.length} memories retrieved`);
+              console.log(`   ⚡ Cache hit: ${contextMetrics.cacheHit ? 'Yes' : 'No'}`);
+              console.log(`   📊 Supermemory: ${contextMetrics.supermemoryTime}ms, Mem0: ${contextMetrics.mem0Time}ms`);
+              
+              // Log performance warning if context enhancement is slow
+              if (contextTime > 5000) {
+                console.warn(`⚠️ Context enhancement took ${contextTime}ms - consider optimizing`);
+              }
+            } else {
+              console.warn(`⚠️ Failed to get enhanced context in ${contextTime}ms: ${contextResult.error}`);
+              
+              // Create notification about context enhancement failure
+              await this.createNotification(triggerConfig.user_id, {
+                type: 'context_enhancement_failed',
+                title: 'Gmail Context Enhancement Failed',
+                message: `Failed to enhance trigger context for ${senderEmail}: ${contextResult.error}`,
+                data: {
+                  triggerConfigId: triggerConfig.id,
+                  senderEmail,
+                  error: contextResult.error,
+                  executionTime: contextTime
+                }
+              });
+            }
+          } else {
+            console.warn(`⚠️ Could not extract sender email from Gmail trigger payload`);
+            console.log(`📋 Payload structure:`, JSON.stringify(eventData.payload, null, 2));
+            
+            // Create notification about sender extraction failure
+            await this.createNotification(triggerConfig.user_id, {
+              type: 'sender_extraction_failed',
+              title: 'Gmail Sender Extraction Failed',
+              message: 'Could not extract sender email from Gmail trigger payload',
+              data: {
+                triggerConfigId: triggerConfig.id,
+                payload: eventData.payload
+              }
+            });
+          }
+        } catch (contextError: any) {
+          const contextTime = Date.now() - contextStartTime;
+          console.error(`❌ Context enhancement error in ${contextTime}ms:`, contextError);
+          
+          // Create notification about context enhancement error
+          await this.createNotification(triggerConfig.user_id, {
+            type: 'context_enhancement_error',
+            title: 'Gmail Context Enhancement Error',
+            message: `Context enhancement failed with error: ${contextError.message}`,
+            data: {
+              triggerConfigId: triggerConfig.id,
+              error: contextError.message,
+              executionTime: contextTime,
+              stack: contextError.stack
+            }
+          });
+          
+          // Continue execution without enhanced context
+          console.log(`🔄 Continuing trigger execution without enhanced context`);
+        }
+      }
+      
+      // Create action prompt with event context and enhanced Gmail context
       const actionPrompt = `${triggerConfig.action_query}
 
 TRIGGER EVENT CONTEXT:
 ${formattedEventData}
 
-Please execute the requested action using the appropriate tools based on the trigger event data above.`;
+${enhancedContext ? `\n${enhancedContext}\n` : ''}
 
-      console.log(`🤖 Formatted action prompt:`, actionPrompt);
+Please execute the requested action using the appropriate tools based on the trigger event data${enhancedContext ? ' and enhanced context' : ''} above.`;
+
+      console.log(`🤖 Formatted action prompt:`, actionPrompt.substring(0, 500) + '...');
 
       // Initialize Composio agent service (same as chat)
       const composioAgent = new ComposioAgentService();
@@ -676,15 +778,29 @@ Please execute the requested action using the appropriate tools based on the tri
    * Format Gmail event data for AI
    */
   private formatGmailEventForAI(payload: any): string {
-    return `EMAIL DETAILS:
-- From: ${payload.from || 'Unknown sender'}
-- To: ${payload.to || 'Unknown recipient'}
-- Subject: ${payload.subject || 'No subject'}
-- Body: ${payload.body || payload.snippet || 'No content available'}
-- Date: ${payload.date || payload.internalDate || 'Unknown date'}
-- Message ID: ${payload.id || 'Unknown ID'}
-- Thread ID: ${payload.threadId || 'Unknown thread'}
-- Labels: ${payload.labelIds?.join(', ') || 'No labels'}`;
+    // Extract data from the rich payload structure
+    const sender = payload.sender || payload.from || 'Unknown sender';
+    const recipient = payload.to || 'Unknown recipient';
+    const subject = payload.subject || 'No subject';
+    const body = payload.message_text || payload.body || payload.snippet || payload.preview?.body || 'No content available';
+    const date = payload.message_timestamp || payload.date || payload.internalDate || 'Unknown date';
+    const messageId = payload.message_id || payload.id || 'Unknown ID';
+    const threadId = payload.thread_id || payload.threadId || 'Unknown thread';
+    const labels = payload.label_ids || payload.labelIds || [];
+    const hasAttachments = payload.attachment_list?.length > 0 || payload.hasAttachments || false;
+    const isImportant = labels.includes('IMPORTANT') || false;
+
+    return `📧 NEW EMAIL RECEIVED:
+- From: ${sender}
+- To: ${recipient}
+- Subject: ${subject}
+- Body: ${body.substring(0, 500)}${body.length > 500 ? '...' : ''}
+- Date: ${date}
+- Message ID: ${messageId}
+- Thread ID: ${threadId}
+- Labels: ${labels.join(', ') || 'No labels'}
+- Has Attachments: ${hasAttachments ? 'Yes' : 'No'}
+- Is Important: ${isImportant ? 'Yes' : 'No'}`;
   }
 
   /**

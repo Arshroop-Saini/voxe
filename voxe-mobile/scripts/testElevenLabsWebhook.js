@@ -3,7 +3,7 @@ const fetch = require('node-fetch');
 // Test script for ElevenLabs webhook integration
 // This simulates what ElevenLabs would send to your webhook
 
-const WEBHOOK_URL = 'https://00cd-2601-586-4980-a50-e063-20a3-2ca0-7387.ngrok-free.app/api/elevenlabs-webhook';
+const WEBHOOK_URL = 'https://ac70-2601-586-4980-a50-942-33be-17f0-abbf.ngrok-free.app/api/elevenlabs-webhook';
 
 async function testWebhook() {
   const webhookUrl = WEBHOOK_URL;

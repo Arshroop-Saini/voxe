@@ -117,8 +117,9 @@ class Mem0Service {
     try {
       console.log(`📚 Getting all memories for user: ${context.user_id}`);
       
-      // Use standalone getMemories function
-      const result = await getMemories('', {
+      // Use standalone getMemories function with a proper query
+      // Changed from empty string to a general query that should work
+      const result = await getMemories('memories', {
         user_id: context.user_id,
         mem0ApiKey: process.env.MEM0_API_KEY,
       });
@@ -127,7 +128,7 @@ class Mem0Service {
       return result;
     } catch (error) {
       console.error('❌ Error getting memories:', error);
-      return null;
+      return [];  // Return empty array instead of null for consistency
     }
   }
 
