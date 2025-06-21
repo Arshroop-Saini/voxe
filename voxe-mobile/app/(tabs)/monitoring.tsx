@@ -13,6 +13,7 @@ import { Text, View } from '@/components/Themed';
 import { triggerService, TriggerConfig, AvailableTrigger } from '@/services/triggerService';
 import { FontAwesome } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { EmailEmbeddingButton } from '@/components/EmailEmbeddingButton';
 
 export default function MonitoringScreen() {
   const [triggers, setTriggers] = useState<TriggerConfig[]>([]);
@@ -446,6 +447,26 @@ export default function MonitoringScreen() {
             <FontAwesome name="flask" size={16} color="#007AFF" />
             <Text style={styles.secondaryButtonText}>Test Webhook</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Email Embedding Section */}
+        <View style={styles.embeddingSection}>
+          <Text style={styles.embeddingSectionTitle}>Email Intelligence</Text>
+          <Text style={styles.embeddingSectionSubtitle}>
+            Embed today's Gmail inbox emails to enhance trigger automation with contextual understanding
+          </Text>
+          <EmailEmbeddingButton
+            size="medium"
+            variant="primary"
+            onSuccess={(result) => {
+              console.log('✅ Email embedding successful:', result);
+              // Optionally refresh triggers or show additional success feedback
+            }}
+            onError={(error) => {
+              console.error('❌ Email embedding error:', error);
+              // Error is already handled by the component with Alert
+            }}
+          />
         </View>
 
         {/* Gmail Test Button (for Step 5 testing) */}
@@ -1328,5 +1349,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f8ff',
     borderWidth: 1,
     borderColor: '#007AFF',
+  },
+  embeddingSection: {
+    marginVertical: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    marginHorizontal: 20,
+  },
+  embeddingSectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  embeddingSectionSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 16,
   },
 }); 

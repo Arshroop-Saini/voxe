@@ -9,6 +9,7 @@ import composioWebhookRouter from './api/composio/webhook.js';
 import composioTriggersRouter from './api/composio/triggers.js';
 import chatRouter from './api/chat/index.js';
 import memoriesRouter from './api/memories/index.js';
+import emailEmbeddingRouter from './api/email-embedding/index.js';
 import elevenLabsRouter from './api/elevenlabs-webhook.js';
 import elevenLabsPostCallRouter from './api/elevenlabs-post-call-webhook.js';
 
@@ -35,6 +36,7 @@ app.use('/api/composio/webhook', composioWebhookRouter);
 app.use('/api/composio/triggers', composioTriggersRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/memories', memoriesRouter);
+app.use('/api/email-embedding', emailEmbeddingRouter);
 
 // ElevenLabs webhooks
 app.use('/api/elevenlabs-webhook', elevenLabsRouter);
