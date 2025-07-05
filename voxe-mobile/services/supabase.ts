@@ -3,15 +3,39 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+console.log('🔧 Supabase Service Initialization:', {
+  supabaseUrl: supabaseUrl ? 'SET' : 'NOT SET',
+  supabaseAnonKey: supabaseAnonKey ? 'SET' : 'NOT SET',
+  urlValue: supabaseUrl,
+  keyLength: supabaseAnonKey.length
+});
+
+if (!supabaseUrl) {
+  console.error('❌ EXPO_PUBLIC_SUPABASE_URL is not set!');
+  throw new Error('supabaseUrl is required.');
+}
+
+if (!supabaseAnonKey) {
+  console.error('❌ EXPO_PUBLIC_SUPABASE_ANON_KEY is not set!');
+  throw new Error('supabaseAnonKey is required.');
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     // Disable automatic URL detection to prevent conflicts with Expo Router
-    detectSessionInUrl: false,
-    // We'll handle OAuth callbacks manually
     autoRefreshToken: true,
     persistSession: true,
+    detectSessionInUrl: false, // CRITICAL: Disable this to prevent Expo Router conflicts
+    // Add storage key to avoid conflicts
+    storageKey: 'voxe-auth-token',
+    // Add custom storage for better web compatibility
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
 });
+
+console.log('✅ Supabase client created successfully');
+
+export { supabase };
 
 export interface User {
   id: string;
@@ -117,35 +141,32 @@ class SupabaseService {
     }
   }
 
-  // Google OAuth sign in
+  // Google OAuth sign in - SIMPLIFIED for web
   async signInWithGoogle(): Promise<{ url: string | null; error: string | null }> {
     try {
-      // Determine the correct redirect URL based on environment
-      const redirectUrl = process.env.EXPO_PUBLIC_OAUTH_REDIRECT_URL || 'http://localhost:8081';
-      const authCallbackUrl = `${redirectUrl}/auth/callback`;
+      console.log('🚀 Starting Google OAuth for web app - will redirect current window');
       
-      console.log('Initiating Google OAuth with redirect URL:', authCallbackUrl);
-      
+      // For web apps, redirect the current window (not open new window)
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: authCallbackUrl,
-          // Add query redirect to handle post-auth navigation
-          queryParams: {
-            redirect_to: `${redirectUrl}/auth`
-          }
+          redirectTo: window.location.origin, // Redirect back to same origin
+          skipBrowserRedirect: false, // Allow the redirect to happen
         },
       });
 
       if (error) {
-        console.error('OAuth initiation error:', error);
+        console.error('❌ OAuth error:', error);
         return { url: null, error: error.message };
       }
 
-      console.log('OAuth URL generated:', data.url);
-      return { url: data.url, error: null };
+      // This will cause the current window to redirect to Google OAuth
+      // When user approves, Google will redirect back with tokens in URL
+      // Our handleOAuthFromURL will process those tokens manually
+      console.log('✅ OAuth redirect initiated - redirecting to Google...');
+      return { url: null, error: null };
     } catch (error) {
-      console.error('Error in signInWithGoogle:', error);
+      console.error('❌ Error in signInWithGoogle:', error);
       return { 
         url: null, 
         error: error instanceof Error ? error.message : 'Unknown error' 
@@ -153,54 +174,38 @@ class SupabaseService {
     }
   }
 
-  // Handle OAuth callback
+  // Handle OAuth callback - NOW NEEDED since we disabled detectSessionInUrl
   async handleOAuthCallback(url: string): Promise<{ success: boolean; error: string | null }> {
     try {
-      console.log('Processing OAuth callback URL:', url);
+      console.log('🔐 Processing OAuth callback URL manually:', url);
       
-      // Validate URL format
-      if (!url || typeof url !== 'string') {
-        return { success: false, error: 'Invalid URL provided' };
-      }
-      
+      // Extract tokens from URL
       let accessToken: string | null = null;
       let refreshToken: string | null = null;
+      let tokenType: string | null = null;
       
-      try {
-        // Try to parse as URL object first
-        const urlObj = new URL(url);
-        
-        // Check hash fragment first (most common for OAuth)
-        if (urlObj.hash) {
-          const fragment = urlObj.hash.substring(1); // Remove the #
-          const params = new URLSearchParams(fragment);
-          accessToken = params.get('access_token');
-          refreshToken = params.get('refresh_token');
-        }
-        
-        // If not found in hash, check query parameters
-        if (!accessToken && urlObj.search) {
-          const searchParams = urlObj.searchParams;
-          accessToken = searchParams.get('access_token');
-          refreshToken = searchParams.get('refresh_token');
-        }
-      } catch (urlError) {
-        console.warn('Failed to parse as URL object, trying manual parsing:', urlError);
-        
-        // Fallback: manual parsing for malformed URLs
-        const accessTokenMatch = url.match(/[?&#]access_token=([^&]+)/);
-        const refreshTokenMatch = url.match(/[?&#]refresh_token=([^&]+)/);
-        
-        if (accessTokenMatch) {
-          accessToken = decodeURIComponent(accessTokenMatch[1]);
-        }
-        if (refreshTokenMatch) {
-          refreshToken = decodeURIComponent(refreshTokenMatch[1]);
-        }
+      // Parse URL for tokens
+      const urlObj = new URL(url);
+      
+      // Check hash fragment first (most common for OAuth)
+      if (urlObj.hash) {
+        const fragment = urlObj.hash.substring(1); // Remove the #
+        const params = new URLSearchParams(fragment);
+        accessToken = params.get('access_token');
+        refreshToken = params.get('refresh_token');
+        tokenType = params.get('token_type');
+      }
+      
+      // If not found in hash, check query parameters
+      if (!accessToken && urlObj.search) {
+        const searchParams = urlObj.searchParams;
+        accessToken = searchParams.get('access_token');
+        refreshToken = searchParams.get('refresh_token');
+        tokenType = searchParams.get('token_type');
       }
       
       if (accessToken) {
-        console.log('Found access token, setting session...');
+        console.log('✅ Found access token, setting session...');
         
         const { data, error } = await supabase.auth.setSession({
           access_token: accessToken,
@@ -208,17 +213,17 @@ class SupabaseService {
         });
         
         if (error) {
-          console.error('Error setting session:', error);
+          console.error('❌ Error setting session:', error);
           return { success: false, error: error.message };
         }
         
-        console.log('Session set successfully');
+        console.log('✅ Session set successfully');
         return { success: true, error: null };
       }
       
       return { success: false, error: 'No access token found in URL' };
     } catch (error) {
-      console.error('Error in handleOAuthCallback:', error);
+      console.error('❌ Error in handleOAuthCallback:', error);
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'Unknown error' 
@@ -229,15 +234,23 @@ class SupabaseService {
   // Listen to auth state changes
   onAuthStateChange(callback: (user: User | null) => void) {
     return supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state change:', event, session?.user?.email);
-      
-      const user = session?.user ? {
-        id: session.user.id,
-        email: session.user.email || '',
-        created_at: session.user.created_at || '',
-      } : null;
-      
-      callback(user);
+      try {
+        console.log('🔄 Auth state change event:', event);
+        if (session?.user) {
+          console.log('✅ Session user:', session.user.email);
+        }
+        
+        const user = session?.user ? {
+          id: session.user.id,
+          email: session.user.email || '',
+          created_at: session.user.created_at || '',
+        } : null;
+        
+        callback(user);
+      } catch (error) {
+        console.error('❌ Error in auth state change handler:', error);
+        callback(null); // Fallback to no user on error
+      }
     });
   }
 }

@@ -10,8 +10,6 @@ import {
 } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { supabaseService } from '@/services/supabase';
-import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
 import { supabase } from '@/services/supabase';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -23,56 +21,91 @@ export default function AuthScreen() {
   const [user, setUser] = useState<any>(null);
   const [initialized, setInitialized] = useState(false);
 
+  // Utility function to safely clean OAuth URLs
+  const cleanOAuthUrl = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+        console.log('🧹 URL cleaned successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error cleaning URL:', error);
+    }
+  };
+
   useEffect(() => {
     if (initialized) return; // Prevent multiple initializations
     
     setInitialized(true);
+    
+    // Handle OAuth callback in URL on page load
+    const handleOAuthFromURL = async () => {
+      try {
+        // Check if we're in a browser environment
+        if (typeof window === 'undefined') return;
+        
+        const currentUrl = window.location.href;
+        console.log('🌐 Current URL:', currentUrl);
+        
+        if (currentUrl.includes('access_token=') || currentUrl.includes('refresh_token=')) {
+          console.log('🔐 OAuth callback detected in URL on page load');
+          
+          // Manually process the OAuth callback since we disabled Supabase's auto-detection
+          const { success, error } = await supabaseService.handleOAuthCallback(currentUrl);
+          
+          if (success) {
+            console.log('✅ OAuth callback processed successfully');
+            // Load user to update state
+            await loadUser();
+            // Clear loading state immediately
+            setLoading(false);
+            Alert.alert('Success', 'Signed in with Google successfully!');
+          } else {
+            console.error('❌ OAuth callback failed:', error);
+            // Clear loading state on error too
+            setLoading(false);
+            Alert.alert('Error', error || 'OAuth callback failed');
+          }
+          
+          // Clean up the URL to prevent Expo Router issues
+          setTimeout(() => {
+            cleanOAuthUrl();
+          }, 1000);
+        }
+      } catch (error) {
+        console.error('❌ Error handling OAuth from URL:', error);
+      }
+    };
+    
+    handleOAuthFromURL();
     loadUser();
     
     // Listen to auth state changes
     const { data: { subscription } } = supabaseService.onAuthStateChange((user) => {
+      console.log('🔄 Auth state changed:', user ? `User: ${user.email}` : 'No user');
       setUser(user);
-      if (user && loading) {
-        setLoading(false); // Clear loading when user is authenticated
-      }
-    });
-
-    // Handle deep links when app is already open (for OAuth callbacks)
-    const handleDeepLink = async (url: string) => {
-      console.log('Handling deep link:', url);
       
-      // Only handle auth-related URLs to avoid conflicts with Expo Router
-      if (url.includes('voxemobile://auth') || 
-          url.includes('#access_token=') || 
-          url.includes('?access_token=') ||
-          url.includes('&access_token=')) {
-        console.log('Auth callback detected via deep link');
+      // Clear loading state if user is authenticated
+      if (user && loading) {
+        console.log('✅ User authenticated, clearing loading state');
+        setLoading(false);
         
-        try {
-          const { success, error } = await supabaseService.handleOAuthCallback(url);
-          
-          if (success) {
-            console.log('Session established from deep link');
-            Alert.alert('Success', 'Signed in with Google successfully!');
-          } else {
-            console.error('Error processing auth callback:', error);
-          }
-        } catch (error) {
-          console.error('Error in deep link handler:', error);
+        // Only show success alert if we haven't already shown it in handleOAuthFromURL
+        const currentUrl = window.location.href;
+        if (!currentUrl.includes('access_token=')) {
+          Alert.alert('Success', 'Signed in successfully!');
         }
-      } else {
-        console.log('Non-auth deep link ignored:', url);
+        
+        // Clean URL when user is authenticated
+        setTimeout(() => {
+          cleanOAuthUrl();
+        }, 1000);
       }
-    };
-
-    // Listen for deep links
-    const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
-      handleDeepLink(url);
     });
 
     return () => {
       subscription.unsubscribe();
-      linkingSubscription?.remove();
     };
   }, [initialized, loading]);
 
@@ -118,81 +151,29 @@ export default function AuthScreen() {
   };
 
   const handleGoogleSignIn = async () => {
+    console.log('🔥 GOOGLE SIGN IN BUTTON PRESSED');
+    
     try {
       setLoading(true);
-      console.log('Starting Google OAuth flow...');
       
-      // Get the OAuth URL from the service
+      // For web apps, this will redirect the current window to Google OAuth
+      // No need to handle URLs manually - Supabase does everything
       const { url, error } = await supabaseService.signInWithGoogle();
       
       if (error) {
-        console.error('OAuth initiation error:', error);
+        console.error('❌ OAuth error:', error);
         Alert.alert('Error', error);
         setLoading(false);
         return;
       }
-
-      if (url) {
-        console.log('Opening OAuth URL:', url);
-        
-        // Determine redirect URL based on environment
-        const redirectUrl = process.env.EXPO_PUBLIC_OAUTH_REDIRECT_URL || 'http://localhost:8081';
-        const callbackUrl = `${redirectUrl}/auth/callback`;
-        
-        // Open the OAuth URL in browser with correct callback URL
-        const result = await WebBrowser.openAuthSessionAsync(
-          url,
-          callbackUrl,
-          {
-            showTitle: true,
-            toolbarColor: '#6366f1',
-            controlsColor: '#ffffff',
-            // For web, we want to show in same window
-            showInRecents: false,
-          }
-        );
-
-        console.log('OAuth browser result:', result);
-
-        if (result.type === 'success' && result.url) {
-          console.log('OAuth success, processing callback URL:', result.url);
-          
-          // Handle the OAuth callback
-          const { success, error: callbackError } = await supabaseService.handleOAuthCallback(result.url);
-          
-          if (success) {
-            console.log('OAuth callback processed successfully');
-            Alert.alert('Success', 'Signed in with Google successfully!');
-            // Loading will be cleared by auth state change
-          } else {
-            console.error('OAuth callback processing failed:', callbackError);
-            Alert.alert('Error', callbackError || 'Failed to complete sign in');
-            setLoading(false);
-          }
-          
-        } else if (result.type === 'cancel') {
-          console.log('User cancelled OAuth flow');
-          Alert.alert('Cancelled', 'Google sign in was cancelled');
-          setLoading(false);
-        } else if (result.type === 'dismiss') {
-          console.log('OAuth browser was dismissed');
-          // Don't show error immediately - check if auth completed
-          setTimeout(async () => {
-            const currentUser = await supabaseService.getCurrentUser();
-            if (!currentUser) {
-              Alert.alert('Info', 'Sign in was not completed');
-              setLoading(false);
-            }
-          }, 1000);
-        } else {
-          console.error('OAuth flow failed with result:', result);
-          Alert.alert('Error', 'OAuth flow failed');
-          setLoading(false);
-        }
-      }
+      
+      // If we get here without error, the page should redirect to Google
+      // The loading state will be cleared by auth state change when user returns
+      console.log('✅ OAuth redirect should happen now...');
+      
     } catch (error) {
-      console.error('Google sign in error:', error);
-      Alert.alert('Error', 'Failed to sign in with Google');
+      console.error('❌ Google OAuth error:', error);
+      Alert.alert('Error', 'Failed to start Google sign in');
       setLoading(false);
     }
   };

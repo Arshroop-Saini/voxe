@@ -66,6 +66,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="glasses"
+        options={{
+          title: 'Glasses',
+          tabBarIcon: ({ color }) => <TabBarIcon name="eye" color={color} />,
+          headerShown: false,
+        }}
+      />
+      <Tabs.Screen
         name="auth"
         options={{
           title: 'Settings',
